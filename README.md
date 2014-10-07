@@ -9,6 +9,10 @@ Institutional repository:
 https://ore.exeter.ac.uk/repository/handle/10871/11661
 
 DOI:
-2005 IEEE Congress on Evolutionary Computation vol. 1, pp. 243-250
+http://dx.doi.org/10.1109/CEC.2005.1554691
 
-Run help in matlab for usage details
+Enter: 
+
+help one_plus_one_uncertain_bes 
+
+in matlab for usage details.
