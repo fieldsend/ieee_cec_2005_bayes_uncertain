@@ -218,6 +218,7 @@ else %domination compared at an individual rather than a set level
             A(to_remove,:)=[];
             Av(to_remove,:)=[];
             An(to_remove) = [];
+            Ap(to_remove) = [];
             % add into archive
             Ao=[Ao; m_objectives];
             A=[A; m];
