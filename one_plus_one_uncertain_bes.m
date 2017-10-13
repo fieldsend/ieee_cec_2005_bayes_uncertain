@@ -1,7 +1,7 @@
-function [A,Ao,Av,samples,s_var,An,Ap] = one_plus_one_uncertain_bes(sdc,evaluations,num_reevaluations,cost_function,domain_function,l,num_obj,std_mut,func_arg,alpha,eta)
+function [A,Ao,Av,samples,s_var,An,Ap,H,Ho,Hv,Hn] = one_plus_one_uncertain_bes(sdc,evaluations,num_reevaluations,cost_function,domain_function,l,num_obj,std_mut,func_arg,alpha,eta,mutate_all_values)
 
 % [A,Ao,Av,samples,s_var,An,Ap] = 
-% one_plus_one_uncertain_bes(sdc,evaluations,num_reevaluations,cost_function,domain_function,l,num_obj,std_mut,func_arg,alpha,eta)
+% one_plus_one_uncertain_bes(sdc,evaluations,num_reevaluations,cost_function,domain_function,l,num_obj,std_mut,func_arg,alpha,eta,mutate_all_values)
 %
 %
 % ARGUMENTS
@@ -19,8 +19,10 @@ function [A,Ao,Av,samples,s_var,An,Ap] = one_plus_one_uncertain_bes(sdc,evaluati
 % alpha = level of alpha for probabilistic dominance check 
 % eta = discount rate for history when there is temporal noise
 %   suspected (optional, set at 1.0, i.e. no discount, if argument
-%   not provided)
-%    
+%   not provided) 
+% mutate_all_values = 1 to mutate all values, 0 to mutate just one decision
+%   variable at random (optional, set at 0, i.e. mutate just one variable 
+%   if not passed)  
 % RETURNS
 % A = Archive solutions
 % Ao = Corresponding archive objective evaluations
@@ -29,7 +31,8 @@ function [A,Ao,Av,samples,s_var,An,Ap] = one_plus_one_uncertain_bes(sdc,evaluati
 % s_var = matrix or corresponding sample variances  
 % An = num reevaluations per archive member
 % Ap =  highest level of probabilistic domination experienced by archive member
-%    
+% H = all visited design vectors    
+%
 % Jonathan Fieldsend, University of Exeter, 2005,2009,2014
     
 func_arg.dom_check=0; %move to point if accepted into archive
@@ -37,6 +40,7 @@ if nargin ==10
     fprintf('Eta unspecified, so set at default 1.0 (assumes stationary variance over time/space)\n');
     fprintf('Schedule unspecified, so assumed fixed at num_reevaluations value throughout optimisation\n');
     eta=1.0;
+    mutate_all_values = 0;
 else
     fprintf('eta of %f used',eta);
 end
@@ -46,6 +50,10 @@ sample_rate=500;
 sample_index=1;
 s_var_index=1;
 samples=cell(floor(evaluations/sample_rate),2);
+H = zeros(ceil(evaluations/num_reevaluations),l);
+Ho = zeros(ceil(evaluations/num_reevaluations),num_obj);
+Hv = zeros(ceil(evaluations/num_reevaluations),num_obj);
+Hn = zeros(ceil(evaluations/num_reevaluations),1);
 s_var=zeros(evaluations/sample_rate,num_obj);
 % Create random indiviual (Uniform) and evaluate
 c = generate_legal_initial_solution(domain_function,l,func_arg);
@@ -61,6 +69,14 @@ Av = c_est_var; %estimated variance of archive members
 An = num_reevaluations; %num revelauations per archive member
 Ap = 0; % highest level of probabilistic domination experienced by archive member
 c_num = num_reevaluations;
+
+H(1,:)= c; %history of visited locations
+Ho(1,:)= c_mean_objectives; %history of estimated locations
+Hn(1) = num_reevaluations;
+Hv(1,:) = c_est_var;
+k = 1; % history index counter
+
+
 % initalise evaluation counter and print counter
 num_evaluations = num_reevaluations;
 [samples,s_var,sample_index,s_var_index] = update_statistics(samples,s_var,sample_index,s_var_index,num_evaluations,sample_rate,Ao,A,c_est_var);
@@ -69,11 +85,15 @@ counter = num_evaluations;
 while (num_evaluations<evaluations)
     
     % iterate
-    m = perturb(domain_function,c,l,std_mut,func_arg);
-   
+    m = perturb(domain_function,c,l,std_mut,func_arg,mutate_all_values);
     [m_mean_objectives,m_est_var,a,b]=evaluate_f(cost_function,m,num_obj,num_reevaluations,func_arg,a,b,eta);
     m_num = num_reevaluations;
-    
+    %update history
+    k = k+1;
+    H(k,:) = m;
+    Ho(k,:) = m_mean_objectives;
+    Hv(k,:) = m_est_var;
+    Hn(k) = num_reevaluations;
     if (eta==1) %if noise is stationary always use most recent noise variance estimate
         Av_const = repmat(m_est_var,size(Av,1),1); % copy variance matrix to include most recent estimate of var
         if (p_dominates(c_mean_objectives,m_mean_objectives,m_est_var,m_est_var,c_num,m_num)<=alpha) %if c probably dominates m greater than alpha level then discard
@@ -218,7 +238,6 @@ else %domination compared at an individual rather than a set level
             A(to_remove,:)=[];
             Av(to_remove,:)=[];
             An(to_remove) = [];
-            Ap(to_remove) = [];
             % add into archive
             Ao=[Ao; m_objectives];
             A=[A; m];
@@ -240,7 +259,7 @@ end
 %--------------------------------------------------------------------------
 function p=m_dominates(Ao,x)
 
-% combare all members of Ao to x for dominance, assumes one copy of x
+% compare all members of Ao to x for dominance, assumes one copy of x
 % resides in Ao
 [n,m] = size(Ao);
 p=zeros(n,1);
@@ -257,21 +276,13 @@ function d=dominates(x,xp)
 
 % compare x to xp for dominance
 
-[n,m] = size(x);
+[~,m] = size(x);
 wdom = sum(x<=xp);
 dom = sum(x<xp);
 
 d = (wdom==m) & (dom>0);
 end
 
-
-%--------------------------------------------------------------------------
-function p=p_dominates(u,v,u_var,v_var,n_u,n_v)
-
-m = (v-u)./(((v_var)/n_v+(u_var)/n_u).^0.5); %vector of m terms
-p = 0.5*(1+erf(m./sqrt(2)));
-p = prod(p);
-end
 %--------------------------------------------------------------------------
 function [c_mean_objectives,c_estimated_var,a,b]=evaluate_f(cost_function,c,num_obj,num_reevaluations,func_arg,a,b,eta)
 
@@ -289,17 +300,26 @@ a=eta*a+0.5*(num_reevaluations-1);  %aprime = eta*a+0.5(n-1)
 c_estimated_var=b./(a-1);
 end
 %--------------------------------------------------------------------------
-function c = perturb(domain_function, c,l,std_mut,func_arg)
+function c = perturb(domain_function, c,l,std_mut,func_arg,mutate_all_values)
 
-%Perturbs a single parameter of a solution vector
-I=randperm(l);
-i=I(1); %select a decision variable at random
-p = c;
-p(i) = randn()*std_mut+c(i); %mutate with additive Gaussian noise
-while (feval(domain_function,p,func_arg)==0)    %ensure in valid range
-    p(i)=randn()*std_mut+c(i); %mutate with additive Gaussian noise
+if (mutate_all_values==1)
+    p=randn(size(c))*std_mut+c;
+    while (feval(domain_function,p,func_arg)==0)    %ensure in valid range
+        p=randn(size(c))*std_mut+c; %mutate with additive Gaussian noise
+    end
+    c=p;
+else
+    %Perturbs a single parameter of a solution vector
+    I=randperm(l);
+    i=I(1); %select a decision variable at random
+    p = c;
+    p(i) = randn()*std_mut+c(i); %mutate with additive Gaussian noise
+    while (feval(domain_function,p,func_arg)==0)    %ensure in valid range
+        p(i)=randn()*std_mut+c(i); %mutate with additive Gaussian noise
+    end
+    c=p;
 end
-c=p;
+
 end
 %--------------------------------------------------------------------------
 function [c,c_mean_objectives,c_est_var,c_num] = A_plus_one_sample(A,Ao,Av,An,Ap,func_arg)
@@ -325,7 +345,7 @@ while selected==0
             %multiple points in the bin, so roulette wheel selection based
             %on the probability of dominance
             
-            [temp II] = min(Ap(I));
+            [~, II] = min(Ap(I));
             index = I(II);
         end
         selected=1;
@@ -351,7 +371,7 @@ while selected==0
             %multiple points in the bin, so roulette wheel selection based
             %on the probability of dominance
             
-            [temp II] = min(Ap(I));
+            [~, II] = min(Ap(I));
             index = I(II);
             selected=1;
             if (func_arg.dom_check==1)
@@ -369,5 +389,3 @@ c_est_var = Av(index,:);
 c_num = An(index,:);
 
 end
-
-
